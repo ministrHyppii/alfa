@@ -2,12 +2,11 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ui import Select, View, Button
+from discord.ui import Select, View, Button, Modal, TextInput
 import json
 import os
 import re
 import functools
-import aiosqlite
 from datetime import datetime, timedelta
 import asyncio
 from dotenv import load_dotenv
@@ -24,14 +23,35 @@ HIERARCHY_FILE = 'hierarchy.json'
 PERMISSIONS_FILE = 'permissions.json'
 TICKET_CONFIG_FILE = 'ticket_config.json'
 PUNISHMENT_CONFIG_FILE = 'punishment_config.json'
-DB_PATH = "tickets.db"
+BLACKLIST_CONFIG_FILE = 'blacklist_config.json'
+VC_CONFIG_FILE = 'vc_config.json'
+
+# ---------- ПУТИ К JSON-ФАЙЛАМ ДАННЫХ ----------
+TICKETS_FILE = 'tickets.json'
+PUNISHMENTS_FILE = 'punishments.json'
+BLACKLIST_FILE = 'blacklist.json'
 
 # ---------- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ----------
 roster_messages = {}  # {channel_id: message_id}
 ROLE_HIERARCHY = []
 
-# ---------- ФУНКЦИИ ЗАГРУЗКИ/СОХРАНЕНИЯ ----------
-# ФУНКЦИЯ def load_hierarchy
+# ---------- ID ПОЛЬЗОВАТЕЛЯ С ПОЛНЫМИ ПРАВАМИ ----------
+OWNER_ID = 1012623951719051284
+
+# ---------- ФУНКЦИИ ЗАГРУЗКИ/СОХРАНЕНИЯ JSON ----------
+def load_json(filename, default=None):
+    if default is None:
+        default = {}
+    if not os.path.exists(filename):
+        return default
+    with open(filename, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def save_json(filename, data):
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4, ensure_ascii=False, default=str)
+
+# ---------- ЗАГРУЗКА КОНФИГОВ ----------
 def load_hierarchy():
     global ROLE_HIERARCHY
     if not os.path.exists(HIERARCHY_FILE):
@@ -52,61 +72,84 @@ def save_hierarchy(hierarchy):
 ROLE_HIERARCHY = load_hierarchy()
 
 def load_roles():
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return load_json(CONFIG_FILE, {})
 
 def save_roles(data):
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(CONFIG_FILE, data)
 
 def load_permissions():
-    if not os.path.exists(PERMISSIONS_FILE):
-        return {}
-    with open(PERMISSIONS_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    return load_json(PERMISSIONS_FILE, {})
 
 def save_permissions(data):
-    with open(PERMISSIONS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(PERMISSIONS_FILE, data)
 
 def load_ticket_config():
-    if not os.path.exists(TICKET_CONFIG_FILE):
-        default = {
-            "admin_channel_id": None,
-            "allowed_roles": ["Глава", "Зам главы", "Тех администратор"]
-        }
-        save_ticket_config(default)
-        return default
-    with open(TICKET_CONFIG_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    default = {
+        "admin_channel_id": None,
+        "allowed_roles": ["Глава", "Зам главы", "Тех администратор"]
+    }
+    return load_json(TICKET_CONFIG_FILE, default)
 
 def save_ticket_config(data):
-    with open(TICKET_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(TICKET_CONFIG_FILE, data)
 
-TICKET_CONFIG = load_ticket_config()
-
-# ---------- КОНФИГУРАЦИЯ НАКАЗАНИЙ ----------
 def load_punishment_config():
-    if not os.path.exists(PUNISHMENT_CONFIG_FILE):
-        default = {
-            "channel_id": None,
-            "allowed_roles": ["Глава", "Зам главы", "Тех администратор"]
-        }
-        save_punishment_config(default)
-        return default
-    with open(PUNISHMENT_CONFIG_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    default = {
+        "channel_id": None,
+        "allowed_roles": ["Глава", "Зам главы", "Тех администратор"]
+    }
+    return load_json(PUNISHMENT_CONFIG_FILE, default)
 
 def save_punishment_config(data):
-    with open(PUNISHMENT_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    save_json(PUNISHMENT_CONFIG_FILE, data)
 
+def load_blacklist_config():
+    default = {
+        "channel_id": None,
+        "default_conditions": ""
+    }
+    return load_json(BLACKLIST_CONFIG_FILE, default)
+
+def save_blacklist_config(data):
+    save_json(BLACKLIST_CONFIG_FILE, data)
+
+def load_vc_config():
+    default = {
+        "trigger_channel_id": None,
+        "management_channel_id": None,
+        "category_id": None,
+        "name_template": "Голосовой канал {user}"
+    }
+    return load_json(VC_CONFIG_FILE, default)
+
+def save_vc_config(data):
+    save_json(VC_CONFIG_FILE, data)
+
+TICKET_CONFIG = load_ticket_config()
 PUNISHMENT_CONFIG = load_punishment_config()
+BLACKLIST_CONFIG = load_blacklist_config()
+VC_CONFIG = load_vc_config()
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+# ---------- ЗАГРУЗКА ДАННЫХ ИЗ JSON ----------
+def load_tickets():
+    return load_json(TICKETS_FILE, [])
+
+def save_tickets(data):
+    save_json(TICKETS_FILE, data)
+
+def load_punishments():
+    return load_json(PUNISHMENTS_FILE, [])
+
+def save_punishments(data):
+    save_json(PUNISHMENTS_FILE, data)
+
+def load_blacklist():
+    return load_json(BLACKLIST_FILE, [])
+
+def save_blacklist(data):
+    save_json(BLACKLIST_FILE, data)
+
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (с проверкой OWNER_ID) ----------
 def get_user_role_level(user: discord.Member, config: dict):
     user_role_ids = [role.id for role in user.roles]
     for level, role_name in enumerate(ROLE_HIERARCHY):
@@ -123,13 +166,17 @@ def has_role(user: discord.Member, role_name: str, config: dict) -> bool:
     return any(role.id == role_id for role in user.roles)
 
 def check_management_permissions(interaction: discord.Interaction) -> bool:
+    if interaction.user.id == OWNER_ID:
+        return True
     config = load_roles()
     level, _ = get_user_role_level(interaction.user, config)
-    if level is None or level > 2:
-        return False
-    return True
+    if level is not None and level <= 2:
+        return True
+    return False
 
 def check_command_permission(interaction: discord.Interaction, command_name: str) -> bool:
+    if interaction.user.id == OWNER_ID:
+        return True
     perms = load_permissions()
     if command_name not in perms:
         return True
@@ -144,6 +191,8 @@ def check_command_permission(interaction: discord.Interaction, command_name: str
     return level <= required_level
 
 def check_ticket_permission(user: discord.Member) -> bool:
+    if user.id == OWNER_ID:
+        return True
     config = load_roles()
     allowed = TICKET_CONFIG.get("allowed_roles", [])
     if not allowed:
@@ -162,6 +211,8 @@ def check_ticket_permission(user: discord.Member) -> bool:
     return level <= min_level
 
 def check_punishment_permission(user: discord.Member) -> bool:
+    if user.id == OWNER_ID:
+        return True
     config = load_roles()
     allowed = PUNISHMENT_CONFIG.get("allowed_roles", [])
     if not allowed:
@@ -194,7 +245,7 @@ def require_permission(command_name: str):
         return wrapper
     return decorator
 
-# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ ТАБЛИЦЫ ----------
+# ---------- ФУНКЦИЯ ОБНОВЛЕНИЯ ТАБЛИЦЫ РОЛЕЙ ----------
 async def update_roster(channel: discord.TextChannel):
     if channel.id not in roster_messages:
         return
@@ -226,87 +277,29 @@ async def update_roster(channel: discord.TextChannel):
             embed.set_footer(text=f"Всего: {len(users)} участников")
     await msg.edit(embed=embed)
 
-# ---------- БАЗА ДАННЫХ ----------
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        # Создаём таблицу tickets, если её нет
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS tickets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id INTEGER UNIQUE,
-                message_id INTEGER,
-                user_id INTEGER,
-                target_user_id TEXT,
-                description TEXT,
-                location TEXT,
-                ps TEXT,
-                status TEXT DEFAULT 'waiting',
-                admin_id INTEGER,
-                reason TEXT,
-                punishment TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        # Добавляем колонку closed_at, если её нет
-        cursor = await db.execute("PRAGMA table_info(tickets)")
-        columns = await cursor.fetchall()
-        column_names = [col[1] for col in columns]
-        if 'closed_at' not in column_names:
-            await db.execute('ALTER TABLE tickets ADD COLUMN closed_at TIMESTAMP')
-            print("✅ Добавлена колонка closed_at в таблицу tickets")
-
-        # Создаём таблицу punishments
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS punishments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                admin_id INTEGER,
-                type TEXT,
-                reason TEXT,
-                conditions TEXT,
-                status TEXT DEFAULT 'active',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                removed_at TIMESTAMP,
-                removed_by INTEGER,
-                removed_reason TEXT,
-                converted_to INTEGER
-            )
-        ''')
-        await db.commit()
-
+# ---------- ФУНКЦИИ ДЛЯ ТИКЕТОВ (JSON) ----------
 async def get_ticket_by_channel(channel_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT * FROM tickets WHERE channel_id = ?", (channel_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return dict(zip(
-                    ["id", "channel_id", "message_id", "user_id", "target_user_id",
-                     "description", "location", "ps", "status", "admin_id", "reason", "punishment", "created_at", "closed_at"],
-                    row
-                ))
+    tickets = load_tickets()
+    for ticket in tickets:
+        if ticket.get('channel_id') == channel_id:
+            return ticket
     return None
 
 async def update_ticket_status(channel_id, status, admin_id=None, reason=None, punishment=None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        query = "UPDATE tickets SET status = ?"
-        params = [status]
-        if admin_id is not None:
-            query += ", admin_id = ?"
-            params.append(admin_id)
-        if reason is not None:
-            query += ", reason = ?"
-            params.append(reason)
-        if punishment is not None:
-            query += ", punishment = ?"
-            params.append(punishment)
-        if status in ("approved", "rejected"):
-            query += ", closed_at = CURRENT_TIMESTAMP"
-        query += " WHERE channel_id = ?"
-        params.append(channel_id)
-        await db.execute(query, params)
-        await db.commit()
+    tickets = load_tickets()
+    for ticket in tickets:
+        if ticket.get('channel_id') == channel_id:
+            ticket['status'] = status
+            if admin_id:
+                ticket['admin_id'] = admin_id
+            if reason:
+                ticket['reason'] = reason
+            if punishment:
+                ticket['punishment'] = punishment
+            if status in ("approved", "rejected"):
+                ticket['closed_at'] = datetime.now().isoformat()
+            break
+    save_tickets(tickets)
 
 async def update_status_message(bot, channel_id, ticket):
     channel = bot.get_channel(channel_id)
@@ -325,66 +318,78 @@ async def update_status_message(bot, channel_id, ticket):
         "approved": "Одобрено (наказание выдано)", "rejected": "Отказано"
     }
     embed = discord.Embed(
-        title=f"📩 Тикет #{ticket['id']}",
-        color=0x00ff00 if ticket["status"] == "approved" else 0xff0000 if ticket["status"] == "rejected" else 0xffaa00,
+        title=f"📩 Тикет #{ticket.get('id', '')}",
+        color=0x00ff00 if ticket.get("status") == "approved" else 0xff0000 if ticket.get("status") == "rejected" else 0xffaa00,
         timestamp=datetime.now()
     )
-    embed.add_field(name="Подал", value=f"<@{ticket['user_id']}>", inline=True)
-    embed.add_field(name="Нарушитель", value=ticket['target_user_id'], inline=True)
+    embed.add_field(name="Подал", value=f"<@{ticket.get('user_id')}>", inline=True)
+    embed.add_field(name="Нарушитель", value=ticket.get('target_user_id'), inline=True)
     embed.add_field(name="Статус",
-                    value=f"{status_emoji.get(ticket['status'], '')} {status_text.get(ticket['status'], '')}",
+                    value=f"{status_emoji.get(ticket.get('status'), '')} {status_text.get(ticket.get('status'), '')}",
                     inline=False)
-    embed.add_field(name="Суть", value=ticket['description'], inline=False)
-    if ticket['location']:
-        embed.add_field(name="Место", value=ticket['location'], inline=True)
-    if ticket['ps']:
-        embed.add_field(name="PS", value=ticket['ps'], inline=True)
-    if ticket['reason']:
-        embed.add_field(name="Причина закрытия", value=ticket['reason'], inline=False)
-    if ticket['punishment']:
-        embed.add_field(name="Наказание", value=ticket['punishment'], inline=False)
-    if ticket['closed_at']:
+    embed.add_field(name="Суть", value=ticket.get('description'), inline=False)
+    if ticket.get('location'):
+        embed.add_field(name="Место", value=ticket.get('location'), inline=True)
+    if ticket.get('ps'):
+        embed.add_field(name="PS", value=ticket.get('ps'), inline=True)
+    if ticket.get('reason'):
+        embed.add_field(name="Причина закрытия", value=ticket.get('reason'), inline=False)
+    if ticket.get('punishment'):
+        embed.add_field(name="Наказание", value=ticket.get('punishment'), inline=False)
+    if ticket.get('closed_at'):
         try:
-            closed_dt = datetime.strptime(ticket['closed_at'], "%Y-%m-%d %H:%M:%S")
+            closed_dt = datetime.fromisoformat(ticket['closed_at'])
             delete_time = closed_dt + timedelta(hours=24)
             embed.set_footer(text=f"Канал будет удалён {delete_time.strftime('%d.%m.%Y в %H:%M')}")
         except:
             pass
     await msg.edit(embed=embed)
 
-# ---------- ФУНКЦИИ ДЛЯ НАКАЗАНИЙ ----------
+# ---------- ФУНКЦИИ ДЛЯ НАКАЗАНИЙ (JSON) ----------
 async def add_punishment(user_id, admin_id, type, reason, conditions=None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "INSERT INTO punishments (user_id, admin_id, type, reason, conditions) VALUES (?, ?, ?, ?, ?)",
-            (user_id, admin_id, type, reason, conditions)
-        )
-        await db.commit()
-        return cursor.lastrowid
+    punishments = load_punishments()
+    new_id = max([p.get('id', 0) for p in punishments]) + 1 if punishments else 1
+    entry = {
+        "id": new_id,
+        "user_id": user_id,
+        "admin_id": admin_id,
+        "type": type,
+        "reason": reason,
+        "conditions": conditions,
+        "status": "active",
+        "created_at": datetime.now().isoformat(),
+        "removed_at": None,
+        "removed_by": None,
+        "removed_reason": None,
+        "converted_to": None
+    }
+    punishments.append(entry)
+    save_punishments(punishments)
+    return new_id
 
 async def get_active_punishments(user_id, type=None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        if type:
-            cursor = await db.execute(
-                "SELECT * FROM punishments WHERE user_id = ? AND type = ? AND status = 'active'",
-                (user_id, type)
-            )
-        else:
-            cursor = await db.execute(
-                "SELECT * FROM punishments WHERE user_id = ? AND status = 'active'",
-                (user_id,)
-            )
-        rows = await cursor.fetchall()
-        columns = ["id", "user_id", "admin_id", "type", "reason", "conditions", "status", "created_at", "removed_at", "removed_by", "removed_reason", "converted_to"]
-        return [dict(zip(columns, row)) for row in rows]
+    punishments = load_punishments()
+    result = []
+    for p in punishments:
+        if p.get('user_id') != user_id:
+            continue
+        if p.get('status') != 'active':
+            continue
+        if type and p.get('type') != type:
+            continue
+        result.append(p)
+    return result
 
 async def remove_punishment(punishment_id, removed_by, reason):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE punishments SET status = 'removed', removed_at = CURRENT_TIMESTAMP, removed_by = ?, removed_reason = ? WHERE id = ?",
-            (removed_by, reason, punishment_id)
-        )
-        await db.commit()
+    punishments = load_punishments()
+    for p in punishments:
+        if p.get('id') == punishment_id:
+            p['status'] = 'removed'
+            p['removed_at'] = datetime.now().isoformat()
+            p['removed_by'] = removed_by
+            p['removed_reason'] = reason
+            break
+    save_punishments(punishments)
 
 async def get_user_punishments_summary(user_id):
     warnings = await get_active_punishments(user_id, 'warning')
@@ -397,13 +402,14 @@ async def check_and_convert_warnings(user_id, bot):
         to_convert = warnings[:3]
         reason = "3 предупреждения (автоматическая конвертация)"
         reprimand_id = await add_punishment(user_id, 0, 'reprimand', reason, None)
-        async with aiosqlite.connect(DB_PATH) as db:
-            for w in to_convert:
-                await db.execute(
-                    "UPDATE punishments SET status = 'converted', converted_to = ? WHERE id = ?",
-                    (reprimand_id, w['id'])
-                )
-            await db.commit()
+        punishments = load_punishments()
+        for w in to_convert:
+            for p in punishments:
+                if p.get('id') == w['id']:
+                    p['status'] = 'converted'
+                    p['converted_to'] = reprimand_id
+                    break
+        save_punishments(punishments)
         await send_punishment_notification(bot, user_id, 'reprimand', reason, admin_name="Система", conditions=None, converted_from_warnings=True)
         return True
     return False
@@ -411,12 +417,11 @@ async def check_and_convert_warnings(user_id, bot):
 async def check_and_reset_reprimands(user_id, bot):
     reprimands = await get_active_punishments(user_id, 'reprimand')
     if len(reprimands) >= 3:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "UPDATE punishments SET status = 'expired' WHERE user_id = ? AND status = 'active'",
-                (user_id,)
-            )
-            await db.commit()
+        punishments = load_punishments()
+        for p in punishments:
+            if p.get('user_id') == user_id and p.get('status') == 'active':
+                p['status'] = 'expired'
+        save_punishments(punishments)
         channel_id = PUNISHMENT_CONFIG.get('channel_id')
         if channel_id:
             channel = bot.get_channel(channel_id)
@@ -456,32 +461,108 @@ async def send_punishment_notification(bot, user_id, type, reason, admin_name, c
         embed.add_field(name="Примечание", value="Конвертировано из 3 предупреждений", inline=False)
     await channel.send(embed=embed)
 
-# ---------- ФОНОВАЯ ЗАДАЧА ДЛЯ УДАЛЕНИЯ КАНАЛОВ ----------
-async def delete_expired_tickets(bot):
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        try:
-            async with aiosqlite.connect(DB_PATH) as db:
-                cursor = await db.execute(
-                    "SELECT channel_id FROM tickets WHERE status IN ('approved', 'rejected') AND datetime(closed_at) <= datetime('now', '-1 day')"
-                )
-                rows = await cursor.fetchall()
-                for row in rows:
-                    channel_id = row[0]
-                    channel = bot.get_channel(channel_id)
-                    if channel:
-                        try:
-                            await channel.delete(reason="Автоматическое удаление через 24 часа после закрытия")
-                            print(f"Канал {channel.name} удалён.")
-                        except Exception as e:
-                            print(f"Ошибка удаления канала {channel_id}: {e}")
-                    await db.execute("DELETE FROM tickets WHERE channel_id = ?", (channel_id,))
-                await db.commit()
-        except Exception as e:
-            print(f"Ошибка в delete_expired_tickets: {e}")
-        await asyncio.sleep(60)
+# ---------- ФУНКЦИИ ДЛЯ ЧС (JSON) – с поддержкой steam_id ----------
+async def add_blacklist(user_id, target_name, reason, conditions, steam_id=None):
+    """
+    Добавляет запись в ЧС. Если steam_id указан и есть активная запись с таким же steam_id,
+    обновляет target_name и возвращает id существующей записи, иначе создаёт новую.
+    """
+    blacklist = load_blacklist()
+    # Если указан steam_id, ищем активную запись с таким steam_id
+    if steam_id:
+        steam_id = steam_id.strip()
+        for entry in blacklist:
+            if entry.get('status') == 'active' and entry.get('steam_id') == steam_id:
+                # Обновляем target_name
+                entry['target_name'] = target_name
+                # Также можно обновить reason и conditions? По желанию, но оставим как есть.
+                save_blacklist(blacklist)
+                return entry['id']  # возвращаем существующий id
+    # Если не нашли или steam_id не указан, создаём новую запись
+    new_id = max([b.get('id', 0) for b in blacklist]) + 1 if blacklist else 1
+    entry = {
+        "id": new_id,
+        "user_id": user_id,
+        "target_name": target_name,
+        "reason": reason,
+        "conditions": conditions,
+        "steam_id": steam_id or "",  # сохраняем даже пустое
+        "status": "active",
+        "created_at": datetime.now().isoformat(),
+        "removed_at": None,
+        "removed_by": None,
+        "removed_reason": None
+    }
+    blacklist.append(entry)
+    save_blacklist(blacklist)
+    return new_id
 
-# ---------- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ПОЛЬЗОВАТЕЛЯ ИЗ REPLY ----------
+async def get_active_blacklist(user_id=None, target_name=None):
+    blacklist = load_blacklist()
+    result = []
+    for entry in blacklist:
+        if entry.get('status') != 'active':
+            continue
+        if user_id and entry.get('user_id') != user_id:
+            continue
+        if target_name and target_name.lower() not in entry.get('target_name', '').lower():
+            continue
+        result.append(entry)
+    return result
+
+async def remove_blacklist(entry_id, removed_by, removed_reason):
+    blacklist = load_blacklist()
+    for entry in blacklist:
+        if entry.get('id') == entry_id:
+            entry['status'] = 'removed'
+            entry['removed_at'] = datetime.now().isoformat()
+            entry['removed_by'] = removed_by
+            entry['removed_reason'] = removed_reason
+            break
+    save_blacklist(blacklist)
+
+async def get_blacklist_by_id(entry_id):
+    blacklist = load_blacklist()
+    for entry in blacklist:
+        if entry.get('id') == entry_id:
+            return entry
+    return None
+
+async def send_blacklist_notification(bot, entry, is_add=True, removed_reason=None):
+    channel_id = BLACKLIST_CONFIG.get('channel_id')
+    if not channel_id:
+        return
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    if is_add:
+        embed = discord.Embed(
+            title="🚫 Выдача ЧС",
+            color=discord.Color.red(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Пользователь", value=entry['target_name'] if entry['user_id'] == 0 else f"<@{entry['user_id']}>", inline=True)
+        embed.add_field(name="Причина", value=entry['reason'], inline=False)
+        if entry.get('conditions'):
+            embed.add_field(name="Условия снятия", value=entry['conditions'], inline=False)
+        if entry.get('steam_id'):
+            embed.add_field(name="Steam ID", value=entry['steam_id'], inline=True)
+        embed.set_footer(text=f"ID записи: {entry['id']}")
+    else:
+        embed = discord.Embed(
+            title="✅ Снятие ЧС",
+            color=discord.Color.green(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Пользователь", value=entry['target_name'] if entry['user_id'] == 0 else f"<@{entry['user_id']}>", inline=True)
+        embed.add_field(name="Причина снятия", value=removed_reason, inline=False)
+        if entry.get('steam_id'):
+            embed.add_field(name="Steam ID", value=entry['steam_id'], inline=True)
+        embed.set_footer(text=f"ID записи: {entry['id']}")
+    await channel.send(embed=embed)
+
+# ---------- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ПОЛЬЗОВАТЕЛЯ ИЗ REPLY (для ЧС и тикетов) ----------
 async def get_target_from_reply(interaction: discord.Interaction):
     if interaction.message and interaction.message.reference:
         try:
@@ -491,6 +572,30 @@ async def get_target_from_reply(interaction: discord.Interaction):
         except:
             pass
     return None
+
+# ---------- ФОНОВАЯ ЗАДАЧА ДЛЯ УДАЛЕНИЯ КАНАЛОВ ТИКЕТОВ ----------
+async def delete_expired_tickets(bot):
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            tickets = load_tickets()
+            now = datetime.now()
+            for ticket in tickets:
+                if ticket.get('status') in ('approved', 'rejected') and ticket.get('closed_at'):
+                    closed_at = datetime.fromisoformat(ticket['closed_at'])
+                    if (now - closed_at) >= timedelta(hours=24):
+                        channel = bot.get_channel(ticket['channel_id'])
+                        if channel:
+                            try:
+                                await channel.delete(reason="Автоматическое удаление через 24 часа после закрытия")
+                                print(f"Канал {channel.name} удалён.")
+                            except Exception as e:
+                                print(f"Ошибка удаления канала {ticket['channel_id']}: {e}")
+                        tickets = [t for t in tickets if t.get('id') != ticket.get('id')]
+                        save_tickets(tickets)
+        except Exception as e:
+            print(f"Ошибка в delete_expired_tickets: {e}")
+        await asyncio.sleep(60)
 
 # ---------- КЛАССЫ ДЛЯ ТИКЕТОВ ----------
 class RejectModal(discord.ui.Modal, title="❌ Отказ в жалобе"):
@@ -638,22 +743,34 @@ class ReportModal(discord.ui.Modal, title="📝 Подача жалобы"):
 
         msg = await channel.send(embed=embed)
 
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                "INSERT INTO tickets (channel_id, message_id, user_id, target_user_id, description, location, ps) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (channel.id, msg.id, interaction.user.id, self.target_name.value, self.description.value,
-                 self.location.value or "", self.ps.value or "")
-            )
-            await db.commit()
-            ticket_id = cursor.lastrowid
+        tickets = load_tickets()
+        new_id = max([t.get('id', 0) for t in tickets]) + 1 if tickets else 1
+        ticket_data = {
+            "id": new_id,
+            "channel_id": channel.id,
+            "message_id": msg.id,
+            "user_id": interaction.user.id,
+            "target_user_id": self.target_name.value,
+            "description": self.description.value,
+            "location": self.location.value or "",
+            "ps": self.ps.value or "",
+            "status": "waiting",
+            "admin_id": None,
+            "reason": None,
+            "punishment": None,
+            "created_at": datetime.now().isoformat(),
+            "closed_at": None
+        }
+        tickets.append(ticket_data)
+        save_tickets(tickets)
 
         admin_channel_id = TICKET_CONFIG.get("admin_channel_id")
         if admin_channel_id:
             admin_channel = interaction.guild.get_channel(admin_channel_id)
             if admin_channel:
-                view = TicketActionView(ticket_id, channel.id, interaction.user.id)
+                view = TicketActionView(new_id, channel.id, interaction.user.id)
                 admin_embed = discord.Embed(
-                    title=f"🆕 Новый тикет #{ticket_id}",
+                    title=f"🆕 Новый тикет #{new_id}",
                     color=0x00aaff,
                     timestamp=datetime.now()
                 )
@@ -706,15 +823,14 @@ class RoleSelectView(View):
         await interaction.response.edit_message(content="", embed=embed, view=None)
         await update_roster(interaction.channel)
 
-# ---------- МОДАЛЬНЫЕ ОКНА ДЛЯ НАКАЗАНИЙ (с динамической статистикой) ----------
+# ---------- МОДАЛЬНЫЕ ОКНА ДЛЯ НАКАЗАНИЙ ----------
 class WarningModal(discord.ui.Modal, title="⚠️ Выдача предупреждения"):
-    def __init__(self, user=None):
+    def __init__(self):
         super().__init__()
-        self.user = user
         self.user_input = discord.ui.TextInput(
-            label="Пользователь (или ответьте на сообщение)",
+            label="Пользователь (имя, @упоминание или ID)",
             placeholder="Например: @user или имя",
-            required=False
+            required=True
         )
         self.reason = discord.ui.TextInput(
             label="Причина",
@@ -733,30 +849,24 @@ class WarningModal(discord.ui.Modal, title="⚠️ Выдача предупре
         await interaction.response.defer(ephemeral=True)
 
         target = None
-        if self.user_input.value:
-            raw = self.user_input.value.strip()
-            if raw.startswith('<@') and raw.endswith('>'):
-                user_id = int(raw.strip('<@!>'))
-                target = interaction.guild.get_member(user_id)
-            elif raw.isdigit():
-                target = interaction.guild.get_member(int(raw))
-            else:
-                for member in interaction.guild.members:
-                    if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
-                        target = member
-                        break
-                if not target:
-                    for member in interaction.guild.members:
-                        if member.name.lower().startswith(raw.lower()) or member.display_name.lower().startswith(raw.lower()):
-                            target = member
-                            break
+        target_name = ""
+        raw = self.user_input.value.strip()
+        if raw.startswith('<@') and raw.endswith('>'):
+            user_id = int(raw.strip('<@!>'))
+            target = interaction.guild.get_member(user_id)
+        elif raw.isdigit():
+            target = interaction.guild.get_member(int(raw))
+        else:
+            for member in interaction.guild.members:
+                if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
+                    target = member
+                    break
+            if not target:
+                target_name = raw
 
-        if not target:
-            target = await get_target_from_reply(interaction)
-
-        if not target:
+        if not target and not target_name:
             await interaction.followup.send(
-                "❌ Не удалось определить пользователя. Укажите его в поле или ответьте на сообщение бота с упоминанием.",
+                "❌ Не удалось определить пользователя. Укажите корректное имя, @упоминание или ID.",
                 ephemeral=True
             )
             return
@@ -765,29 +875,34 @@ class WarningModal(discord.ui.Modal, title="⚠️ Выдача предупре
             await interaction.followup.send("❌ У вас нет прав на выдачу наказаний.", ephemeral=True)
             return
 
-        await add_punishment(target.id, interaction.user.id, 'warning', self.reason.value, self.conditions.value or None)
-        await send_punishment_notification(
-            interaction.client,
-            target.id,
-            'warning',
-            self.reason.value,
-            interaction.user.display_name,
-            self.conditions.value or None
-        )
-        converted = await check_and_convert_warnings(target.id, interaction.client)
-        if converted:
-            await check_and_reset_reprimands(target.id, interaction.client)
-
-        await interaction.followup.send(f"✅ Предупреждение выдано пользователю {target.mention}.", ephemeral=True)
+        if target:
+            user_id = target.id
+            display_name = target.display_name
+            await add_punishment(user_id, interaction.user.id, 'warning', self.reason.value, self.conditions.value or None)
+            await send_punishment_notification(
+                interaction.client,
+                user_id,
+                'warning',
+                self.reason.value,
+                interaction.user.display_name,
+                self.conditions.value or None
+            )
+            converted = await check_and_convert_warnings(user_id, interaction.client)
+            if converted:
+                await check_and_reset_reprimands(user_id, interaction.client)
+            await interaction.followup.send(f"✅ Предупреждение выдано пользователю {target.mention}.", ephemeral=True)
+        else:
+            await add_punishment(0, interaction.user.id, 'warning', self.reason.value, self.conditions.value or None, target_name=target_name)
+            await send_punishment_notification_with_name(interaction.client, 0, target_name, 'warning', self.reason.value, interaction.user.display_name, self.conditions.value or None)
+            await interaction.followup.send(f"✅ Предупреждение выдано пользователю '{target_name}'.", ephemeral=True)
 
 class ReprimandModal(discord.ui.Modal, title="📢 Выдача выговора"):
-    def __init__(self, user=None):
+    def __init__(self):
         super().__init__()
-        self.user = user
         self.user_input = discord.ui.TextInput(
-            label="Пользователь (или ответьте на сообщение)",
+            label="Пользователь (имя, @упоминание или ID)",
             placeholder="Например: @user или имя",
-            required=False
+            required=True
         )
         self.reason = discord.ui.TextInput(
             label="Причина",
@@ -806,30 +921,24 @@ class ReprimandModal(discord.ui.Modal, title="📢 Выдача выговора
         await interaction.response.defer(ephemeral=True)
 
         target = None
-        if self.user_input.value:
-            raw = self.user_input.value.strip()
-            if raw.startswith('<@') and raw.endswith('>'):
-                user_id = int(raw.strip('<@!>'))
-                target = interaction.guild.get_member(user_id)
-            elif raw.isdigit():
-                target = interaction.guild.get_member(int(raw))
-            else:
-                for member in interaction.guild.members:
-                    if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
-                        target = member
-                        break
-                if not target:
-                    for member in interaction.guild.members:
-                        if member.name.lower().startswith(raw.lower()) or member.display_name.lower().startswith(raw.lower()):
-                            target = member
-                            break
+        target_name = ""
+        raw = self.user_input.value.strip()
+        if raw.startswith('<@') and raw.endswith('>'):
+            user_id = int(raw.strip('<@!>'))
+            target = interaction.guild.get_member(user_id)
+        elif raw.isdigit():
+            target = interaction.guild.get_member(int(raw))
+        else:
+            for member in interaction.guild.members:
+                if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
+                    target = member
+                    break
+            if not target:
+                target_name = raw
 
-        if not target:
-            target = await get_target_from_reply(interaction)
-
-        if not target:
+        if not target and not target_name:
             await interaction.followup.send(
-                "❌ Не удалось определить пользователя. Укажите его в поле или ответьте на сообщение бота с упоминанием.",
+                "❌ Не удалось определить пользователя. Укажите корректное имя, @упоминание или ID.",
                 ephemeral=True
             )
             return
@@ -838,24 +947,30 @@ class ReprimandModal(discord.ui.Modal, title="📢 Выдача выговора
             await interaction.followup.send("❌ У вас нет прав на выдачу наказаний.", ephemeral=True)
             return
 
-        await add_punishment(target.id, interaction.user.id, 'reprimand', self.reason.value, self.conditions.value or None)
-        await send_punishment_notification(
-            interaction.client,
-            target.id,
-            'reprimand',
-            self.reason.value,
-            interaction.user.display_name,
-            self.conditions.value or None
-        )
-        await check_and_reset_reprimands(target.id, interaction.client)
-
-        await interaction.followup.send(f"✅ Выговор выдан пользователю {target.mention}.", ephemeral=True)
+        if target:
+            user_id = target.id
+            display_name = target.display_name
+            await add_punishment(user_id, interaction.user.id, 'reprimand', self.reason.value, self.conditions.value or None)
+            await send_punishment_notification(
+                interaction.client,
+                user_id,
+                'reprimand',
+                self.reason.value,
+                interaction.user.display_name,
+                self.conditions.value or None
+            )
+            await check_and_reset_reprimands(user_id, interaction.client)
+            await interaction.followup.send(f"✅ Выговор выдан пользователю {target.mention}.", ephemeral=True)
+        else:
+            await add_punishment(0, interaction.user.id, 'reprimand', self.reason.value, self.conditions.value or None, target_name=target_name)
+            await send_punishment_notification_with_name(interaction.client, 0, target_name, 'reprimand', self.reason.value, interaction.user.display_name, self.conditions.value or None)
+            await interaction.followup.send(f"✅ Выговор выдан пользователю '{target_name}'.", ephemeral=True)
 
 class RemovePunishmentModal(discord.ui.Modal, title="Снятие наказания"):
     user_input = discord.ui.TextInput(
-        label="Пользователь (или ответьте на сообщение)",
+        label="Пользователь (имя, @упоминание или ID)",
         placeholder="Например: @user или имя",
-        required=False
+        required=True
     )
     punishment_type = discord.ui.TextInput(
         label="Тип (warning/reprimand)",
@@ -868,30 +983,24 @@ class RemovePunishmentModal(discord.ui.Modal, title="Снятие наказан
         await interaction.response.defer(ephemeral=True)
 
         target = None
-        if self.user_input.value:
-            raw = self.user_input.value.strip()
-            if raw.startswith('<@') and raw.endswith('>'):
-                user_id = int(raw.strip('<@!>'))
-                target = interaction.guild.get_member(user_id)
-            elif raw.isdigit():
-                target = interaction.guild.get_member(int(raw))
-            else:
-                for member in interaction.guild.members:
-                    if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
-                        target = member
-                        break
-                if not target:
-                    for member in interaction.guild.members:
-                        if member.name.lower().startswith(raw.lower()) or member.display_name.lower().startswith(raw.lower()):
-                            target = member
-                            break
+        target_name = ""
+        raw = self.user_input.value.strip()
+        if raw.startswith('<@') and raw.endswith('>'):
+            user_id = int(raw.strip('<@!>'))
+            target = interaction.guild.get_member(user_id)
+        elif raw.isdigit():
+            target = interaction.guild.get_member(int(raw))
+        else:
+            for member in interaction.guild.members:
+                if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
+                    target = member
+                    break
+            if not target:
+                target_name = raw
 
-        if not target:
-            target = await get_target_from_reply(interaction)
-
-        if not target:
+        if not target and not target_name:
             await interaction.followup.send(
-                "❌ Не удалось определить пользователя. Укажите его в поле или ответьте на сообщение бота с упоминанием.",
+                "❌ Не удалось определить пользователя. Укажите корректное имя, @упоминание или ID.",
                 ephemeral=True
             )
             return
@@ -905,26 +1014,62 @@ class RemovePunishmentModal(discord.ui.Modal, title="Снятие наказан
             await interaction.followup.send("❌ Неверный тип. Укажите 'warning' или 'reprimand'.", ephemeral=True)
             return
 
-        punishments = await get_active_punishments(target.id, ptype)
-        if not punishments:
-            await interaction.followup.send(f"❌ У пользователя {target.mention} нет активных наказаний типа {ptype}.", ephemeral=True)
-            return
+        if target:
+            user_id = target.id
+            punishments = await get_active_punishments(user_id, ptype)
+            if not punishments:
+                await interaction.followup.send(f"❌ У пользователя {target.mention} нет активных наказаний типа {ptype}.", ephemeral=True)
+                return
+            for p in punishments:
+                await remove_punishment(p['id'], interaction.user.id, self.reason.value)
+            embed = discord.Embed(
+                title="✅ Снятие наказания",
+                description=f"С {target.mention} сняты все {ptype}.\nПричина: {self.reason.value}",
+                color=discord.Color.green(),
+                timestamp=datetime.now()
+            )
+            channel_id = PUNISHMENT_CONFIG.get('channel_id')
+            if channel_id:
+                channel = interaction.guild.get_channel(channel_id)
+                if channel:
+                    await channel.send(embed=embed)
+            await interaction.followup.send(f"✅ Все активные {ptype} сняты с {target.mention}.", ephemeral=True)
+        else:
+            await interaction.followup.send("❌ Снятие наказаний с текстовых имён пока не поддерживается.", ephemeral=True)
 
-        for p in punishments:
-            await remove_punishment(p['id'], interaction.user.id, self.reason.value)
+# ---------- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ОТПРАВКИ УВЕДОМЛЕНИЙ С ИМЕНЕМ ----------
+async def send_punishment_notification_with_name(bot, user_id, display_name, type, reason, admin_name, conditions=None):
+    channel_id = PUNISHMENT_CONFIG.get('channel_id')
+    if not channel_id:
+        return
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
 
-        await interaction.followup.send(f"✅ Все активные {ptype} сняты с пользователя {target.mention}.", ephemeral=True)
+    if type == 'warning':
+        title = "⚠️ Предупреждение"
+        color = discord.Color.orange()
+    else:
+        title = "📢 Выговор"
+        color = discord.Color.red()
+
+    embed = discord.Embed(title=title, color=color, timestamp=datetime.now())
+    embed.add_field(name="Пользователь", value=display_name, inline=True)
+    embed.add_field(name="Выдал", value=admin_name, inline=True)
+    embed.add_field(name="Причина", value=reason, inline=False)
+    if conditions:
+        embed.add_field(name="Условия снятия", value=conditions, inline=False)
+    await channel.send(embed=embed)
 
 # ---------- БОТ ----------
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    await init_db()
-    await init_blacklist_db()
     bot.loop.create_task(delete_expired_tickets(bot))
     print(f'Бот {bot.user} готов!')
 
@@ -1422,38 +1567,20 @@ async def closeapprove(interaction: discord.Interaction):
     modal = ApproveModal(interaction.channel.id)
     await interaction.response.send_modal(modal)
 
-# ---------- КОМАНДЫ НАКАЗАНИЙ (с подстановкой статистики) ----------
+# ---------- КОМАНДЫ НАКАЗАНИЙ ----------
 @bot.tree.command(name='предупреждение', description='Выдать предупреждение пользователю')
 async def warning(interaction: discord.Interaction):
-    target = await get_target_from_reply(interaction)
-    modal = WarningModal(user=target)
-    if target:
-        warnings = await get_active_punishments(target.id, 'warning')
-        reprimands = await get_active_punishments(target.id, 'reprimand')
-        modal.user_input.default = target.mention
-        modal.user_input.placeholder = f"Наказания: предупреждений - {len(warnings)}, выговоров - {len(reprimands)}"
+    modal = WarningModal()
     await interaction.response.send_modal(modal)
 
 @bot.tree.command(name='выговор', description='Выдать выговор пользователю')
 async def reprimand(interaction: discord.Interaction):
-    target = await get_target_from_reply(interaction)
-    modal = ReprimandModal(user=target)
-    if target:
-        warnings = await get_active_punishments(target.id, 'warning')
-        reprimands = await get_active_punishments(target.id, 'reprimand')
-        modal.user_input.default = target.mention
-        modal.user_input.placeholder = f"Наказания: предупреждений - {len(warnings)}, выговоров - {len(reprimands)}"
+    modal = ReprimandModal()
     await interaction.response.send_modal(modal)
 
 @bot.tree.command(name='снять', description='Снять активные наказания (предупреждения или выговоры)')
 async def remove_punishment(interaction: discord.Interaction):
-    target = await get_target_from_reply(interaction)
     modal = RemovePunishmentModal()
-    if target:
-        modal.user_input.default = target.mention
-        warnings = await get_active_punishments(target.id, 'warning')
-        reprimands = await get_active_punishments(target.id, 'reprimand')
-        modal.user_input.placeholder = f"Наказания: предупреждений - {len(warnings)}, выговоров - {len(reprimands)}"
     await interaction.response.send_modal(modal)
 
 @bot.tree.command(name='setkanalwarning', description='Установить канал для уведомлений о наказаниях')
@@ -1495,154 +1622,7 @@ async def show_punishment_settings(interaction: discord.Interaction):
     embed.add_field(name="Роли, выдающие наказания", value=", ".join(roles) if roles else "Не заданы", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ---------- ПРИМЕР КОМАНДЫ С РАЗРЕШЕНИЕМ ----------
-@bot.tree.command(name='kick', description='Выгнать участника')
-@require_permission('kick')
-async def kick(interaction: discord.Interaction, user: discord.Member, reason: str = "Не указана"):
-    await user.kick(reason=reason)
-    await interaction.response.send_message(f'Пользователь {user.mention} выгнан. Причина: {reason}')
-# ===================================================================
-#   СИСТЕМА ЧС (ЧЁРНЫЙ СПИСОК) – ОТДЕЛЬНЫЙ БЛОК
-# ===================================================================
-
-# ---------- ДОПОЛНИТЕЛЬНЫЕ ИМПОРТЫ (если ещё не добавлены) ----------
-# Убедитесь, что у вас есть: import asyncio, from datetime import datetime, timedelta
-# Они уже должны быть, но на всякий случай проверьте.
-
-# ---------- КОНФИГУРАЦИОННЫЙ ФАЙЛ ДЛЯ ЧС ----------
-BLACKLIST_CONFIG_FILE = 'blacklist_config.json'
-
-def load_blacklist_config():
-    if not os.path.exists(BLACKLIST_CONFIG_FILE):
-        default = {
-            "channel_id": None,
-            "default_conditions": ""  # условия по умолчанию
-        }
-        save_blacklist_config(default)
-        return default
-    with open(BLACKLIST_CONFIG_FILE, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
-def save_blacklist_config(data):
-    with open(BLACKLIST_CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-
-BLACKLIST_CONFIG = load_blacklist_config()
-
-# ---------- ДОБАВЛЕНИЕ ТАБЛИЦЫ ЧС В БАЗУ ДАННЫХ ----------
-# Эту функцию нужно вызвать в init_db (дописать в существующую функцию)
-# Мы добавим отдельную функцию для миграции, которую вызовем в on_ready.
-
-async def init_blacklist_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute('''
-            CREATE TABLE IF NOT EXISTS blacklist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                target_name TEXT,
-                reason TEXT,
-                conditions TEXT,
-                status TEXT DEFAULT 'active',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                removed_at TIMESTAMP,
-                removed_by INTEGER,
-                removed_reason TEXT
-            )
-        ''')
-        # Проверяем наличие колонок (если таблица уже была без нужных полей)
-        cursor = await db.execute("PRAGMA table_info(blacklist)")
-        columns = await cursor.fetchall()
-        column_names = [col[1] for col in columns]
-        if 'target_name' not in column_names:
-            await db.execute('ALTER TABLE blacklist ADD COLUMN target_name TEXT')
-        if 'conditions' not in column_names:
-            await db.execute('ALTER TABLE blacklist ADD COLUMN conditions TEXT')
-        await db.commit()
-
-# ---------- ФУНКЦИИ ДЛЯ РАБОТЫ С ЧС ----------
-async def add_blacklist(user_id, target_name, reason, conditions):
-    """Добавляет запись в ЧС."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "INSERT INTO blacklist (user_id, target_name, reason, conditions) VALUES (?, ?, ?, ?)",
-            (user_id, target_name, reason, conditions)
-        )
-        await db.commit()
-        return cursor.lastrowid
-
-async def get_active_blacklist(user_id=None, target_name=None):
-    """Возвращает активные записи ЧС по ID пользователя или имени."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        if user_id:
-            cursor = await db.execute(
-                "SELECT * FROM blacklist WHERE user_id = ? AND status = 'active'",
-                (user_id,)
-            )
-        elif target_name:
-            cursor = await db.execute(
-                "SELECT * FROM blacklist WHERE target_name LIKE ? AND status = 'active'",
-                (f'%{target_name}%',)
-            )
-        else:
-            cursor = await db.execute(
-                "SELECT * FROM blacklist WHERE status = 'active' ORDER BY created_at DESC"
-            )
-        rows = await cursor.fetchall()
-        columns = ["id", "user_id", "target_name", "reason", "conditions", "status", "created_at", "removed_at", "removed_by", "removed_reason"]
-        return [dict(zip(columns, row)) for row in rows]
-
-async def remove_blacklist(entry_id, removed_by, removed_reason):
-    """Снимает запись ЧС (устанавливает статус removed)."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "UPDATE blacklist SET status = 'removed', removed_at = CURRENT_TIMESTAMP, removed_by = ?, removed_reason = ? WHERE id = ?",
-            (removed_by, removed_reason, entry_id)
-        )
-        await db.commit()
-
-async def get_blacklist_by_id(entry_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT * FROM blacklist WHERE id = ?", (entry_id,))
-        row = await cursor.fetchone()
-        if row:
-            columns = ["id", "user_id", "target_name", "reason", "conditions", "status", "created_at", "removed_at", "removed_by", "removed_reason"]
-            return dict(zip(columns, row))
-    return None
-
-# ---------- ФУНКЦИЯ ОТПРАВКИ УВЕДОМЛЕНИЙ В КАНАЛ ----------
-async def send_blacklist_notification(bot, entry, is_add=True, removed_reason=None):
-    """Отправляет уведомление в канал ЧС."""
-    channel_id = BLACKLIST_CONFIG.get('channel_id')
-    if not channel_id:
-        return
-    channel = bot.get_channel(channel_id)
-    if not channel:
-        return
-
-    if is_add:
-        embed = discord.Embed(
-            title="🚫 Выдача ЧС",
-            color=discord.Color.red(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="Пользователь", value=entry['target_name'] if entry['user_id'] == 0 else f"<@{entry['user_id']}>", inline=True)
-        embed.add_field(name="Причина", value=entry['reason'], inline=False)
-        if entry['conditions']:
-            embed.add_field(name="Условия снятия", value=entry['conditions'], inline=False)
-        embed.set_footer(text=f"ID записи: {entry['id']}")
-    else:
-        embed = discord.Embed(
-            title="✅ Снятие ЧС",
-            color=discord.Color.green(),
-            timestamp=datetime.now()
-        )
-        embed.add_field(name="Пользователь", value=entry['target_name'] if entry['user_id'] == 0 else f"<@{entry['user_id']}>", inline=True)
-        embed.add_field(name="Причина снятия", value=removed_reason, inline=False)
-        embed.set_footer(text=f"ID записи: {entry['id']}")
-
-    await channel.send(embed=embed)
-
-# ---------- МОДАЛЬНЫЕ ОКНА ДЛЯ ЧС ----------
+# ---------- ЧС (ЧЁРНЫЙ СПИСОК) – ОБНОВЛЁННАЯ ВЕРСИЯ ----------
 class BlacklistModal(discord.ui.Modal, title="🚫 Выдача ЧС"):
     def __init__(self, user=None):
         super().__init__()
@@ -1661,14 +1641,19 @@ class BlacklistModal(discord.ui.Modal, title="🚫 Выдача ЧС"):
             label="Условия снятия (необяз.)",
             required=False
         )
+        self.steam_input = discord.ui.TextInput(
+            label="Steam ID (необязательно)",
+            placeholder="Введите Steam ID (32-битный или обычный)",
+            required=False
+        )
         self.add_item(self.user_input)
         self.add_item(self.reason)
         self.add_item(self.conditions)
+        self.add_item(self.steam_input)
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        # Определяем пользователя
         target = None
         target_name = ""
         if self.user_input.value:
@@ -1679,7 +1664,6 @@ class BlacklistModal(discord.ui.Modal, title="🚫 Выдача ЧС"):
             elif raw.isdigit():
                 target = interaction.guild.get_member(int(raw))
             else:
-                # Ищем по имени
                 for member in interaction.guild.members:
                     if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
                         target = member
@@ -1688,7 +1672,7 @@ class BlacklistModal(discord.ui.Modal, title="🚫 Выдача ЧС"):
                     target_name = raw
 
         if not target and not target_name:
-            target = await get_target_from_reply(interaction)  # эта функция уже должна быть определена
+            target = await get_target_from_reply(interaction)
 
         if not target and not target_name:
             await interaction.followup.send(
@@ -1697,17 +1681,16 @@ class BlacklistModal(discord.ui.Modal, title="🚫 Выдача ЧС"):
             )
             return
 
-        # Проверка прав (используем check_management_permissions или свою)
         if not check_management_permissions(interaction):
             await interaction.followup.send("❌ У вас нет прав на выдачу ЧС.", ephemeral=True)
             return
 
-        # Условия: если поле пустое, берём из конфига
         conditions = self.conditions.value
         if not conditions:
             conditions = BLACKLIST_CONFIG.get('default_conditions', '')
 
-        # Добавляем запись
+        steam_id = self.steam_input.value.strip() or None
+
         if target:
             user_id = target.id
             name = target.display_name
@@ -1715,9 +1698,8 @@ class BlacklistModal(discord.ui.Modal, title="🚫 Выдача ЧС"):
             user_id = 0
             name = target_name
 
-        entry_id = await add_blacklist(user_id, name, self.reason.value, conditions)
-
-        # Отправляем уведомление в канал
+        # Добавляем или обновляем запись
+        entry_id = await add_blacklist(user_id, name, self.reason.value, conditions, steam_id)
         entry = await get_blacklist_by_id(entry_id)
         if entry:
             await send_blacklist_notification(interaction.client, entry, is_add=True)
@@ -1735,7 +1717,6 @@ class RemoveBlacklistModal(discord.ui.Modal, title="Снятие ЧС"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
-        # Поиск пользователя аналогично
         target = None
         target_name = ""
         if self.user_input.value:
@@ -1767,7 +1748,6 @@ class RemoveBlacklistModal(discord.ui.Modal, title="Снятие ЧС"):
             await interaction.followup.send("❌ У вас нет прав на снятие ЧС.", ephemeral=True)
             return
 
-        # Ищем активные записи для этого пользователя
         if target:
             entries = await get_active_blacklist(user_id=target.id)
             display = target.display_name
@@ -1779,15 +1759,12 @@ class RemoveBlacklistModal(discord.ui.Modal, title="Снятие ЧС"):
             await interaction.followup.send(f"❌ У {display} нет активных ЧС.", ephemeral=True)
             return
 
-        # Снимаем все записи
         for entry in entries:
             await remove_blacklist(entry['id'], interaction.user.id, self.reason.value)
-            # Отправляем уведомление о снятии
             await send_blacklist_notification(interaction.client, entry, is_add=False, removed_reason=self.reason.value)
 
         await interaction.followup.send(f"✅ ЧС снята с {display}.", ephemeral=True)
 
-# ---------- КОМАНДЫ ЧС ----------
 @bot.tree.command(name='чс', description='Выдать ЧС пользователю')
 async def blacklist_add(interaction: discord.Interaction):
     target = await get_target_from_reply(interaction)
@@ -1821,7 +1798,6 @@ async def edit_default_conditions(interaction: discord.Interaction, action: str,
 @bot.tree.command(name='поиск_чс', description='Поиск ЧС по нику или ID')
 @app_commands.describe(query='Ник или ID пользователя')
 async def search_blacklist(interaction: discord.Interaction, query: str):
-    # Пытаемся найти по ID
     if query.isdigit():
         entries = await get_active_blacklist(user_id=int(query))
     else:
@@ -1832,11 +1808,12 @@ async def search_blacklist(interaction: discord.Interaction, query: str):
         return
 
     embed = discord.Embed(title=f"🔍 Результаты поиска для '{query}'", color=discord.Color.blue())
-    for entry in entries[:5]:  # показываем первые 5
+    for entry in entries[:5]:
         name = entry['target_name'] if entry['user_id'] == 0 else f"<@{entry['user_id']}>"
+        steam = entry.get('steam_id', '')
         embed.add_field(
             name=f"ID {entry['id']} – {name}",
-            value=f"**Причина:** {entry['reason']}\n**Условия:** {entry['conditions'] or 'Нет'}\n**Дата:** {entry['created_at']}",
+            value=f"**Причина:** {entry['reason']}\n**Условия:** {entry['conditions'] or 'Нет'}\n**Steam ID:** {steam or 'Не указан'}\n**Дата:** {entry['created_at']}",
             inline=False
         )
     if len(entries) > 5:
@@ -1853,9 +1830,10 @@ async def list_blacklist(interaction: discord.Interaction):
     embed = discord.Embed(title="📋 Список активных ЧС", color=discord.Color.red())
     for entry in entries[:20]:
         name = entry['target_name'] if entry['user_id'] == 0 else f"<@{entry['user_id']}>"
+        steam = entry.get('steam_id', '')
         embed.add_field(
             name=f"ID {entry['id']} – {name}",
-            value=f"**Причина:** {entry['reason']}\n**Условия:** {entry['conditions'] or 'Нет'}",
+            value=f"**Причина:** {entry['reason']}\n**Условия:** {entry['conditions'] or 'Нет'}\n**Steam ID:** {steam or 'Не указан'}",
             inline=False
         )
     if len(entries) > 20:
@@ -1881,94 +1859,63 @@ async def set_blacklist_channel(interaction: discord.Interaction, channel: disco
     save_blacklist_config(BLACKLIST_CONFIG)
     await interaction.response.send_message(f'✅ Канал для уведомлений о ЧС: {channel.mention}', ephemeral=True)
 
-# ---------- ОБРАБОТЧИК СООБЩЕНИЙ ДЛЯ ОТВЕТОВ С ПИНГОМ ----------
+# ---------- ОБРАБОТЧИК СООБЩЕНИЙ (для ответов с пингом в ЧС) ----------
 @bot.event
 async def on_message(message):
-    # Игнорируем сообщения от бота (чтобы не зациклиться)
     if message.author == bot.user:
         return
 
-    # Проверяем, является ли сообщение ответом на сообщение бота
     if message.reference:
         try:
             referenced = await message.channel.fetch_message(message.reference.message_id)
         except:
             return
         if referenced.author == bot.user:
-            # Проверяем, есть ли упоминания в ответе
             if message.mentions:
-                # Это уведомление о ЧС? Проверяем, содержит ли embed канала ЧС
-                # Мы просто проверим, что это сообщение от бота в канале ЧС
                 channel_id = BLACKLIST_CONFIG.get('channel_id')
                 if referenced.channel.id == channel_id:
-                    # Отправляем ЛС упомянутому пользователю
                     target = message.mentions[0]
-                    # Находим запись ЧС по ID из футера (мы сохраняем ID в футере)
-                    # Попробуем извлечь ID из embed.footer
                     if referenced.embeds:
                         embed = referenced.embeds[0]
                         if embed.footer and embed.footer.text:
-                            # предположим, что футер содержит "ID записи: 123"
                             import re
                             match = re.search(r'ID записи:\s*(\d+)', embed.footer.text)
                             if match:
                                 entry_id = int(match.group(1))
                                 entry = await get_blacklist_by_id(entry_id)
                                 if entry:
-                                    # Отправляем ЛС
                                     dm_embed = discord.Embed(
                                         title="📨 Уведомление о ЧС",
                                         color=discord.Color.red() if entry['status'] == 'active' else discord.Color.green(),
                                         timestamp=datetime.now()
                                     )
                                     if entry['status'] == 'active':
-                                        dm_embed.description = f"Вам была выдана ЧС.\n**Причина:** {entry['reason']}\n**Условия снятия:** {entry['conditions'] or 'Нет'}"
+                                        dm_embed.description = f"Вам была выдана ЧС.\n**Причина:** {entry['reason']}\n**Условия снятия:** {entry['conditions'] or 'Нет'}\n**Steam ID:** {entry.get('steam_id', 'Не указан')}"
                                     else:
                                         dm_embed.description = f"С вас снята ЧС.\n**Причина снятия:** {entry['removed_reason']}"
                                     await target.send(embed=dm_embed)
-                                    # Дадим знать в канале, что ЛС отправлено
                                     await message.channel.send(f"✅ Уведомление отправлено {target.mention} в ЛС.", delete_after=10)
         return
 
-    # Обработка других команд (если они есть)
     await bot.process_commands(message)
 
-# ===================================================================
-#   КОМАНДА /написать – ОТПРАВКА СООБЩЕНИЯ В КАНАЛ
-# ===================================================================
-
-# ---------- АВТОДОПОЛНЕНИЕ ДЛЯ КАНАЛОВ ----------
+# ---------- КОМАНДА /написать ----------
 async def channel_autocomplete(interaction: discord.Interaction, current: str):
-    """
-    Возвращает список текстовых каналов сервера, соответствующих вводу.
-    """
     if not interaction.guild:
         return []
-    # Получаем все текстовые каналы, к которым у бота есть доступ
     channels = [ch for ch in interaction.guild.text_channels if ch.permissions_for(interaction.guild.me).send_messages]
-    # Фильтруем по введённому тексту (без учёта регистра)
     if current:
         channels = [ch for ch in channels if current.lower() in ch.name.lower()]
-    # Возвращаем не более 25 вариантов (ограничение Discord)
     return [
         app_commands.Choice(name=f"#{ch.name}", value=str(ch.id))
         for ch in channels[:25]
     ]
 
-# ---------- КОМАНДА /написать ----------
 @bot.tree.command(name='написать', description='Отправить текст в указанный канал')
-@app_commands.describe(
-    текст='Текст сообщения',
-    канал='Канал для отправки (выберите из списка)'
-)
+@app_commands.describe(текст='Текст сообщения', канал='Канал для отправки (выберите из списка)')
 @app_commands.autocomplete(канал=channel_autocomplete)
-@require_permission('написать')  # используем существующую систему разрешений
+@require_permission('написать')
 async def send_to_channel(interaction: discord.Interaction, текст: str, канал: str):
-    """
-    Отправляет текст в выбранный канал.
-    Параметр канал – строковый ID канала, полученный из автодополнения.
-    """
-    # Проверяем, что канал существует и является текстовым
     try:
         channel_id = int(канал)
         target_channel = interaction.guild.get_channel(channel_id)
@@ -1980,15 +1927,326 @@ async def send_to_channel(interaction: discord.Interaction, текст: str, к�
         await interaction.response.send_message('❌ Указанный канал не найден или не является текстовым.', ephemeral=True)
         return
 
-    # Проверяем, может ли бот отправлять сообщения в этот канал
     if not target_channel.permissions_for(interaction.guild.me).send_messages:
         await interaction.response.send_message('❌ У бота нет прав на отправку сообщений в этот канал.', ephemeral=True)
         return
 
-    # Отправляем сообщение
     try:
         await target_channel.send(текст)
         await interaction.response.send_message(f'✅ Сообщение отправлено в канал {target_channel.mention}.', ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f'❌ Ошибка при отправке: {e}', ephemeral=True)
+
+# ---------- КОМАНДА /kick ----------
+@bot.tree.command(name='kick', description='Выгнать участника')
+@require_permission('kick')
+async def kick(interaction: discord.Interaction, user: discord.Member, reason: str = "Не указана"):
+    await user.kick(reason=reason)
+    await interaction.response.send_message(f'Пользователь {user.mention} выгнан. Причина: {reason}')
+
+# ===================================================================
+#   СИСТЕМА ВРЕМЕННЫХ ГОЛОСОВЫХ КАНАЛОВ (VOICE MASTER)
+# ===================================================================
+# ---------- ХРАНИЛИЩЕ СООБЩЕНИЙ УПРАВЛЕНИЯ ----------
+active_vc_messages = {}
+
+async def get_vc_management_message(guild, voice_channel_id):
+    if voice_channel_id not in active_vc_messages:
+        return None
+    msg_id = active_vc_messages[voice_channel_id]
+    channel_id = VC_CONFIG.get('management_channel_id')
+    if not channel_id:
+        return None
+    channel = guild.get_channel(channel_id)
+    if not channel:
+        return None
+    try:
+        return await channel.fetch_message(msg_id)
+    except:
+        return None
+
+class VoiceControlView(View):
+    def __init__(self, voice_channel_id, creator_id, guild):
+        super().__init__(timeout=None)
+        self.voice_channel_id = voice_channel_id
+        self.creator_id = creator_id
+        self.guild = guild
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.creator_id:
+            return True
+        if interaction.user.guild_permissions.manage_channels:
+            return True
+        await interaction.response.send_message("❌ Только создатель канала или администратор может управлять им.", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="Открыть", style=discord.ButtonStyle.success, emoji="🔓")
+    async def open_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        await channel.set_permissions(self.guild.default_role, connect=True)
+        await interaction.response.send_message("✅ Канал открыт для всех.", ephemeral=True)
+
+    @discord.ui.button(label="Закрыть", style=discord.ButtonStyle.danger, emoji="🔒")
+    async def close_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        await channel.set_permissions(self.guild.default_role, connect=False)
+        await interaction.response.send_message("✅ Канал закрыт (только разрешённые пользователи).", ephemeral=True)
+
+    @discord.ui.button(label="Показать", style=discord.ButtonStyle.secondary, emoji="👁️")
+    async def show_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        await channel.set_permissions(self.guild.default_role, view_channel=True)
+        await interaction.response.send_message("✅ Канал теперь виден всем.", ephemeral=True)
+
+    @discord.ui.button(label="Спрятать", style=discord.ButtonStyle.secondary, emoji="🙈")
+    async def hide_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        await channel.set_permissions(self.guild.default_role, view_channel=False)
+        await interaction.response.send_message("✅ Канал скрыт от всех, кроме разрешённых.", ephemeral=True)
+
+    @discord.ui.button(label="Разрешить", style=discord.ButtonStyle.primary, emoji="➕")
+    async def allow_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        modal = UserPermissionModal(channel, allow=True)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Запретить", style=discord.ButtonStyle.danger, emoji="➖")
+    async def deny_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        modal = UserPermissionModal(channel, allow=False)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Разрешения", style=discord.ButtonStyle.secondary, emoji="📋")
+    async def permissions_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        perms = channel.overwrites
+        users_with_perms = []
+        for target, overwrite in perms.items():
+            if isinstance(target, discord.Member):
+                if overwrite.connect is not None or overwrite.view_channel is not None:
+                    users_with_perms.append(f"{target.mention}: connect={overwrite.connect}, view={overwrite.view_channel}")
+        if not users_with_perms:
+            await interaction.response.send_message("📭 Нет особых разрешений для пользователей.", ephemeral=True)
+        else:
+            embed = discord.Embed(title="📋 Разрешения пользователей", description="\n".join(users_with_perms[:10]), color=discord.Color.blue())
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Удалить канал", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def delete_button(self, interaction: discord.Interaction, button: Button):
+        channel = self.guild.get_channel(self.voice_channel_id)
+        if not channel:
+            await interaction.response.edit_message(content="❌ Канал уже удалён.", view=None)
+            return
+        await channel.delete(reason=f"Удаление по запросу {interaction.user}")
+        msg = await get_vc_management_message(self.guild, self.voice_channel_id)
+        if msg:
+            await msg.delete()
+        active_vc_messages.pop(self.voice_channel_id, None)
+        await interaction.response.send_message("✅ Канал удалён.", ephemeral=True)
+
+class UserPermissionModal(Modal, title="Выберите пользователя"):
+    def __init__(self, channel, allow):
+        super().__init__()
+        self.channel = channel
+        self.allow = allow
+        self.user_input = TextInput(
+            label="Упоминание или ID пользователя",
+            placeholder="Например: @user или 123456789",
+            required=True
+        )
+        self.add_item(self.user_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        raw = self.user_input.value.strip()
+        user = None
+        if raw.startswith('<@') and raw.endswith('>'):
+            user_id = int(raw.strip('<@!>'))
+            user = interaction.guild.get_member(user_id)
+        elif raw.isdigit():
+            user = interaction.guild.get_member(int(raw))
+        else:
+            for member in interaction.guild.members:
+                if member.name.lower() == raw.lower() or member.display_name.lower() == raw.lower():
+                    user = member
+                    break
+        if not user:
+            await interaction.response.send_message("❌ Пользователь не найден.", ephemeral=True)
+            return
+        if self.allow:
+            await self.channel.set_permissions(user, connect=True, view_channel=True)
+            await interaction.response.send_message(f"✅ {user.mention} добавлен в список разрешённых.", ephemeral=True)
+        else:
+            await self.channel.set_permissions(user, connect=False, view_channel=False)
+            await interaction.response.send_message(f"✅ {user.mention} добавлен в список запрещённых.", ephemeral=True)
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    trigger_id = VC_CONFIG.get('trigger_channel_id')
+    if not trigger_id:
+        return
+    if after.channel and after.channel.id == trigger_id:
+        for vc_id in active_vc_messages.keys():
+            ch = member.guild.get_channel(vc_id)
+            if ch and ch.id != trigger_id and ch in member.voice.channels:
+                await member.move_to(None)
+                try:
+                    await member.send("❌ У вас уже есть активный голосовой канал.")
+                except:
+                    pass
+                return
+
+        guild = member.guild
+        category_id = VC_CONFIG.get('category_id')
+        category = guild.get_channel(category_id) if category_id else None
+        name_template = VC_CONFIG.get('name_template', 'Голосовой канал {user}')
+        channel_name = name_template.format(user=member.display_name)
+
+        try:
+            new_channel = await guild.create_voice_channel(
+                name=channel_name,
+                category=category,
+                reason=f"Временный канал для {member.display_name}"
+            )
+        except Exception as e:
+            try:
+                await member.send(f"❌ Не удалось создать канал: {e}")
+            except:
+                pass
+            return
+
+        await member.move_to(new_channel)
+
+        management_channel_id = VC_CONFIG.get('management_channel_id')
+        if management_channel_id:
+            management_channel = guild.get_channel(management_channel_id)
+            if management_channel:
+                view = VoiceControlView(new_channel.id, member.id, guild)
+                embed = discord.Embed(
+                    title=f"🎙️ Управление каналом {channel_name}",
+                    description=f"Создатель: {member.mention}",
+                    color=discord.Color.green(),
+                    timestamp=datetime.now()
+                )
+                msg = await management_channel.send(embed=embed, view=view)
+                try:
+                    await msg.pin()
+                except:
+                    pass
+                active_vc_messages[new_channel.id] = msg.id
+        bot.loop.create_task(check_and_delete_empty_vc_channel(new_channel))
+
+async def check_and_delete_empty_vc_channel(channel):
+    await asyncio.sleep(30)
+    channel = channel.guild.get_channel(channel.id)
+    if not channel:
+        return
+    if len(channel.members) == 0:
+        msg = await get_vc_management_message(channel.guild, channel.id)
+        if msg:
+            await msg.delete()
+        active_vc_messages.pop(channel.id, None)
+        try:
+            await channel.delete(reason="Канал пуст (автоудаление)")
+        except:
+            pass
+
+@bot.tree.command(name='vc_setup', description='Настройка системы временных голосовых каналов')
+@app_commands.describe(
+    trigger='ID голосового канала-триггера',
+    management='ID текстового канала для управления (опционально)',
+    category='ID категории для новых каналов (опционально)',
+    name_template='Шаблон имени (используйте {user} для имени создателя)'
+)
+@app_commands.default_permissions(administrator=True)
+async def vc_setup(interaction: discord.Interaction, trigger: str, management: str = None,
+                   category: str = None, name_template: str = "Голосовой канал {user}"):
+    if not check_management_permissions(interaction):
+        await interaction.response.send_message('❌ У вас недостаточно прав для настройки голосовых каналов.', ephemeral=True)
+        return
+
+    try:
+        trigger_ch = interaction.guild.get_channel(int(trigger))
+        if not trigger_ch or not isinstance(trigger_ch, discord.VoiceChannel):
+            raise ValueError
+    except:
+        await interaction.response.send_message('❌ Неверный ID канала-триггера (нужен ID голосового канала).', ephemeral=True)
+        return
+
+    management_ch = None
+    if management:
+        try:
+            management_ch = interaction.guild.get_channel(int(management))
+            if not management_ch or not isinstance(management_ch, discord.TextChannel):
+                raise ValueError
+        except:
+            await interaction.response.send_message('❌ Неверный ID канала управления (нужен ID текстового канала).', ephemeral=True)
+            return
+
+    category_ch = None
+    if category:
+        try:
+            category_ch = interaction.guild.get_channel(int(category))
+            if not category_ch or not isinstance(category_ch, discord.CategoryChannel):
+                raise ValueError
+        except:
+            await interaction.response.send_message('❌ Неверный ID категории.', ephemeral=True)
+            return
+
+    VC_CONFIG['trigger_channel_id'] = trigger_ch.id
+    VC_CONFIG['management_channel_id'] = management_ch.id if management_ch else None
+    VC_CONFIG['category_id'] = category_ch.id if category_ch else None
+    VC_CONFIG['name_template'] = name_template
+    save_vc_config(VC_CONFIG)
+
+    embed = discord.Embed(title='✅ Настройки сохранены', color=discord.Color.green())
+    embed.add_field(name="Канал-триггер", value=trigger_ch.mention, inline=False)
+    embed.add_field(name="Канал управления", value=management_ch.mention if management_ch else "Не задан (управление в ЛС)", inline=False)
+    embed.add_field(name="Категория", value=category_ch.mention if category_ch else "Не задана", inline=False)
+    embed.add_field(name="Шаблон имени", value=name_template, inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name='vc_config', description='Показать текущие настройки временных голосовых каналов')
+async def vc_config(interaction: discord.Interaction):
+    if not check_management_permissions(interaction):
+        await interaction.response.send_message('❌ У вас недостаточно прав.', ephemeral=True)
+        return
+
+    trigger_id = VC_CONFIG.get('trigger_channel_id')
+    management_id = VC_CONFIG.get('management_channel_id')
+    category_id = VC_CONFIG.get('category_id')
+    name_template = VC_CONFIG.get('name_template', "Голосовой канал {user}")
+
+    trigger = interaction.guild.get_channel(trigger_id) if trigger_id else None
+    management = interaction.guild.get_channel(management_id) if management_id else None
+    category = interaction.guild.get_channel(category_id) if category_id else None
+
+    embed = discord.Embed(title='⚙️ Текущие настройки', color=discord.Color.blue())
+    embed.add_field(name="Канал-триггер", value=trigger.mention if trigger else "Не задан", inline=False)
+    embed.add_field(name="Канал управления", value=management.mention if management else "Не задан (управление в ЛС)", inline=False)
+    embed.add_field(name="Категория", value=category.mention if category else "Не задана", inline=False)
+    embed.add_field(name="Шаблон имени", value=name_template, inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# ---------- ЗАПУСК ----------
 bot.run(TOKEN)
